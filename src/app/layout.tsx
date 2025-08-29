@@ -3,8 +3,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Growth Planner",
-  description: "7日間クエストプランナー",
+  title: "River Agent",
+  description: "AIとともに成長する、7日間の自己成長プランナー",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
