@@ -9,7 +9,7 @@ import { Home, ClipboardList, MessageCircle, Settings, type LucideIcon, Bot,
   Send,
   Mic,
   Camera,
-  Paperclip, } from "lucide-react";
+  Paperclip, Bell } from "lucide-react";
 
 
 /** -----------------------------
@@ -296,6 +296,20 @@ export default function Page() {
     );
   }
 
+  // Page() 内に追加
+  const setDayEnabledAll = (dayIdx: number, enabled: boolean) => {
+    if (!state) return;
+    const copy = structuredClone(state) as AppState;
+    copy.plans[dayIdx].quests = copy.plans[dayIdx].quests.map(q => ({
+      ...q,
+      enabled,
+      // 無効化時は done も落とす
+      done: enabled ? q.done : false,
+    }));
+    setState(copy);
+    saveState(copy);
+  };
+
   // 以降：新デザイン UI
   const todayEnabled = todayPlan?.quests.filter((q) => q.enabled) ?? [];
   const todayDone = todayEnabled.filter((q) => q.done);
@@ -312,19 +326,21 @@ export default function Page() {
         .dark { --background: #0a0a0a; --foreground: #e5e5e5; }
       `}</style>
 
-      <div className="mx-auto max-w-4xl px-4 pb-24 pt-6 lg:px-6">
-        {/* Header */}
-        <header className="mb-4 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">River Agent</h1>
-          <button
-            className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10"
-            aria-label="メニュー"
-            onClick={() => setTab((t) => (t === "設定" ? "ホーム" : "設定"))}
-          >
-            <span className="i">≡</span> 
-          </button>
-          {/*右上ボタン */}
-        </header>
+          <div className="mx-auto max-w-4xl px-4 pb-24 pt-6 lg:px-6">
+      {/* Header */}
+      <header className="mb-4 flex items-center justify-between">
+        <h1 className="text-xl font-semibold">River Agent</h1>
+        <button
+          className="relative inline-flex items-center justify-center rounded-full p-2 text-neutral-600 hover:bg-black/5 dark:text-neutral-300 dark:hover:bg-white/10"
+          aria-label="通知"
+          onClick={() => alert("通知一覧を開く（実装予定）")}
+        >
+          <Bell className="h-5 w-5" />
+          {/* 未読バッジ */}
+          <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5 items-center justify-center rounded-full bg-red-500 text-[10px] text-white"></span>
+        </button>
+        {/*右上ボタン */}
+      </header>
 
         {tab === "ホーム" && (
           <>
@@ -445,6 +461,7 @@ export default function Page() {
             todayIndex={todayIndex}
             onToggleDone={toggleDone}
             onToggleEnabled={toggleEnabled}
+            onToggleDayEnabled={setDayEnabledAll} 
           />
         )}
 
@@ -501,11 +518,13 @@ function QuestView({
   todayIndex,
   onToggleDone,
   onToggleEnabled,
+  onToggleDayEnabled,
 }: {
   plans: DayPlan[];
   todayIndex: number;
   onToggleDone: (dayIdx: number, qid: string) => void;
   onToggleEnabled: (dayIdx: number, qid: string) => void;
+  onToggleDayEnabled: (dayIdx: number, enabled: boolean) => void;
 }) {
   return (
     <section className="space-y-4">
@@ -543,26 +562,32 @@ function QuestView({
                         <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-semibold text-white">TODAY</span>
                       )}
                     </div>
-                    {/* サブタイトルがあればここに表示（例：実践練習・今日） */}
-                    {isToday && (
-                      <div className="text-xs text-rose-500">実践練習・今日</div>
-                    )}
                   </div>
                 </div>
 
-                {/* Dayスイッチ */}
-                <label className="inline-flex cursor-pointer items-center gap-2 select-none">
-                  <span className="text-xs text-neutral-500 hidden sm:inline">有効</span>
-                  <input
-                    type="checkbox"
-                    defaultChecked={dayEnabled}
-                    onChange={(e) => toggleDay(e.target.checked)}
-                    className="peer sr-only"
-                  />
-                  <span className="relative h-6 w-11 rounded-full bg-neutral-200 transition peer-checked:bg-emerald-500">
-                    <span className="absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition peer-checked:translate-x-5" />
-                  </span>
-                </label>
+              {/* Dayスイッチ */}
+              <label className="inline-flex cursor-pointer items-center gap-2 select-none">
+                <span className="hidden text-xs text-neutral-500 sm:inline">
+                  {dayEnabled ? "有効" : "無効"}
+                </span>
+
+                <input
+                  type="checkbox"
+                  checked={dayEnabled}                                
+                  onChange={(e) => onToggleDayEnabled(idx, e.target.checked)}  
+                  className="peer sr-only"
+                />
+
+                <span
+                  className="
+                    relative h-6 w-11 rounded-full bg-neutral-200 transition-colors
+                    peer-checked:bg-emerald-500
+                    before:absolute before:left-1 before:top-1 before:h-4 before:w-4
+                    before:rounded-full before:bg-white before:transition-transform
+                    peer-checked:before:translate-x-5
+                  "
+                />
+              </label>
               </div>
 
               {/* Quests list */}
