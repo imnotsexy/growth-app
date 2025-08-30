@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 /** -----------------------------
- *  型定義（既存）
+ *  型定義（既存 + 拡張）
  *  ----------------------------*/
  type CategoryKey =
   | "運動"
@@ -21,6 +21,12 @@ type Quest = {
   title: string;
   done: boolean;
   enabled: boolean; // ON/OFF
+  // --- 追加（表示強化用・任意） ---
+  category?: string; // サブラベル表示
+  points?: number;   // 行ごとのポイント表示
+  progress?: number; // 0-100（長時間タスク）
+  locked?: boolean;  // ロック表示
+  note?: string;     // 小メモ
 };
 
 type DayPlan = {
@@ -40,14 +46,11 @@ type AppState = {
   theme?: Theme; // テーマ設定
 };
 
-/** -----------------------------
- *  チャット用型
- *  ----------------------------*/
- type ChatRole = "user" | "assistant";
+type ChatRole = "user" | "assistant";
  type ChatMsg = { role: ChatRole; content: string };
 
- /** -----------------------------
- *  点数計算とランク判定
+/** -----------------------------
+ *  ランク判定
  *  ----------------------------*/
 type Rank = "入門者 (Novice)" | "従者 (Squire)" | "騎士 (Knight)" | "侯爵 (Marquis)" | "公爵 (Duke)" | "王者 (Sovereign)";
 
@@ -61,7 +64,7 @@ function calculateRank(score: number): Rank {
 }
 
 /** -----------------------------
- *  定数（既存）
+ *  定数
  *  ----------------------------*/
 const ALL_CATEGORIES: { key: CategoryKey; label: string }[] = [
   { key: "運動", label: "運動" },
@@ -93,17 +96,12 @@ const DEFAULT_THEME: Theme = {
 };
 
 const STORAGE_KEY = "growth-planner-v1";
+const POINTS_PER_QUEST = 10;
 
 /** -----------------------------
  *  ユーティリティ
  *  ----------------------------*/
 const uid = () => Math.random().toString(36).slice(2, 10);
-
-function addScore(currentScore: number, points: number): { newScore: number; rank: Rank } {
-  const newScore = currentScore + points;
-  const rank = calculateRank(newScore);
-  return { newScore, rank };
-}
 
 function buildWeekPlan(selected: CategoryKey[]): DayPlan[] {
   const days: DayPlan[] = [];
@@ -113,11 +111,23 @@ function buildWeekPlan(selected: CategoryKey[]): DayPlan[] {
       const candidates = TEMPLATE_QUESTS[cat];
       const base = (i + idx) % candidates.length;
       const titles = [candidates[base], candidates[(base + 1) % candidates.length]];
-      titles.forEach((t) => quests.push({ id: uid(), title: `${t}`, done: false, enabled: true }));
+      titles.forEach((t, j) =>
+        quests.push({
+          id: uid(),
+          title: t,
+          done: false,
+          enabled: true,
+          category: cat,
+          points: POINTS_PER_QUEST + (j === 1 ? 5 : 0), // 少し変化をつける
+          progress: Math.random() < 0.3 ? Math.floor(Math.random() * 70) + 10 : undefined,
+          locked: false,
+        })
+      );
     });
     const trimmed = quests.slice(0, 5);
     days.push({ day: i, quests: trimmed });
   }
+return days;
   return days;
 }
 
@@ -142,15 +152,11 @@ function saveState(state: AppState) {
  type Tab = "ホーム" | "クエスト" | "チャット" | "設定";
 
 export default function Page() {
-  const [tab, setTab] = useState<Tab>("ホーム"); // 現在のタブ
-  const [menuOpen, setMenuOpen] = useState(false); // メニューの開閉状態を管理
-  const [state, setState] = useState<AppState | null>(null); // アプリの全体状態
-  const [selected, setSelected] = useState<CategoryKey[]>([]); // 選択中のカテゴリ
-  const [score, setScore] = useState(0); // 現在のスコアを管理
-  const hasPlan = !!state?.plans?.length; // プランが存在するか
-  const toggleMenu = () => setMenuOpen((prev) => !prev); // メニューの開閉を切り替え
+  const [tab, setTab] = useState<Tab>("ホーム");
+  const [state, setState] = useState<AppState | null>(null);
+  const [selected, setSelected] = useState<CategoryKey[]>([]);
 
-  
+  // 初期ロード
   useEffect(() => {
     const s = loadState();
     if (s) {
@@ -160,17 +166,8 @@ export default function Page() {
       }
     }
   }, []);
-  
 
-  const handleQuestCompletion = (dayIdx: number, qid: string) => {
-    toggleDone(dayIdx, qid); // クエストの完了状態を切り替え
-
-    // クエスト達成時に10点を加算
-    const { newScore, rank } = addScore(score, 10);
-    setScore(newScore);
-
-    console.log(`現在のスコア: ${newScore}, ランク: ${rank}`);
-  };
+  const hasPlan = !!state?.plans?.length;
 
   const todayIndex = useMemo(() => {
     if (!state?.createdAt) return 0;
@@ -182,35 +179,49 @@ export default function Page() {
 
   const todayPlan = state?.plans?.[todayIndex];
 
-    // --- ここから背景色の適用 ---
-  const backgroundStyle = {
-  backgroundColor: "#f5f3f0", // 落ち着いたベージュ系
-  minHeight: "100vh",
-  } as const;
-  // --- 背景色適用ここまで ---
+  // スコアは全期間の完了クエスト×ポイントで概算
+  const totalPoints = useMemo(() => {
+    if (!state?.plans) return 0;
+    const flat = state.plans.flatMap((p) => p.quests);
+    const doneCnt = flat.filter((q) => q.enabled && q.done).length;
+    return doneCnt * POINTS_PER_QUEST;
+  }, [state?.plans]);
 
+  const username = "勇者タクロウ"; // mock
+  const currentRank = calculateRank(totalPoints);
+  const rankOrder: Rank[] = [
+    "入門者 (Novice)",
+    "従者 (Squire)",
+    "騎士 (Knight)",
+    "侯爵 (Marquis)",
+    "公爵 (Duke)",
+    "王者 (Sovereign)",
+  ];
+  const nextRank = rankOrder[Math.min(rankOrder.indexOf(currentRank) + 1, rankOrder.length - 1)];
+  const thresholdByRank: Record<Rank, number> = {
+    "入門者 (Novice)": 0,
+    "従者 (Squire)": 50,
+    "騎士 (Knight)": 100,
+    "侯爵 (Marquis)": 200,
+    "公爵 (Duke)": 500,
+    "王者 (Sovereign)": 1000,
+  };
+  const toNext = Math.max(thresholdByRank[nextRank] - totalPoints, 0);
+
+  const weekDoneTotal = useMemo(() => state?.plans?.reduce((s, p) => s + p.quests.filter((q) => q.enabled && q.done).length, 0) ?? 0, [state?.plans]);
+  const weekAllTotal = useMemo(() => state?.plans?.reduce((s, p) => s + p.quests.filter((q) => q.enabled).length, 0) ?? 0, [state?.plans]);
+  const weekProgress = weekAllTotal ? Math.round((weekDoneTotal / weekAllTotal) * 100) : 0;
 
   const toggleDone = (dayIdx: number, qid: string) => {
-  if (!state) return;
-  const copy = structuredClone(state) as AppState;
-  const day = copy.plans[dayIdx];
-  const q = day.quests.find((x) => x.id === qid);
-  if (!q) return;
-
-  // クエストの完了状態を切り替え
-  q.done = !q.done;
-
-  // スコアを更新
-  if (q.done) {
-    const { newScore } = addScore(score, 1); // 1点を加算
-    setScore(newScore);
-  } else {
-    setScore((prev) => Math.max(0, prev - 1)); // 1点を減算（最低スコアは0）
-  }
-
-  setState(copy);
-  saveState(copy);
-};
+    if (!state) return;
+    const copy = structuredClone(state) as AppState;
+    const day = copy.plans[dayIdx];
+    const q = day.quests.find((x) => x.id === qid);
+    if (!q || !q.enabled) return;
+    q.done = !q.done;
+    setState(copy);
+    saveState(copy);
+  };
 
   const toggleEnabled = (dayIdx: number, qid: string) => {
     if (!state) return;
@@ -219,6 +230,8 @@ export default function Page() {
     const q = day.quests.find((x) => x.id === qid);
     if (!q) return;
     q.enabled = !q.enabled;
+    // 有効→無効にしたら完了フラグも落とす
+    if (!q.enabled) q.done = false;
     setState(copy);
     saveState(copy);
   };
@@ -229,7 +242,7 @@ export default function Page() {
     if (typeof window !== "undefined") localStorage.removeItem(STORAGE_KEY);
   };
 
-  /** 初期カテゴリ選択ステップ（既存） */
+  // まだプランがない → 旧ウィザードを表示
   if (!hasPlan) {
     const toggleCategory = (key: CategoryKey) => {
       setSelected((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
@@ -245,7 +258,6 @@ export default function Page() {
       };
       setState(next);
       saveState(next);
-      setTab("クエスト");
     };
 
     return (
@@ -271,61 +283,150 @@ export default function Page() {
           <button onClick={generate} className="rounded-xl bg-rose-500 px-4 py-2 text-white shadow">7日間プランを作成</button>
           <button onClick={() => setSelected([])} className="text-sm text-neutral-600 underline underline-offset-4">選択をクリア</button>
         </div>
-
-        <FooterNav current={tab} onChange={setTab} disabled />
       </main>
     );
   }
 
-  /** 通常画面（ホーム/クエスト/チャット/設定） */
+  // 以降：新デザイン UI
+  const todayEnabled = todayPlan?.quests.filter((q) => q.enabled) ?? [];
+  const todayDone = todayEnabled.filter((q) => q.done);
+  const doneCount = todayDone.length;
+  const totalCount = todayEnabled.length;
+  const todayEarned = doneCount * POINTS_PER_QUEST;
+  const achievementRate = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
+
   return (
-    <div>
-      {/* 左上のメニューボタン */}
-      <button
-        onClick={toggleMenu}
-       className={`fixed top-4 left-4 z-20 rounded-full bg-rose-500 p-3 text-white shadow-lg transition-opacity ${
-    menuOpen ? "opacity-50" : "opacity-100"
-  }`}
-      >
-        ☰
-      </button>
+    <main className="min-h-dvh bg-[var(--background)] text-[var(--foreground)]">
+      {/* CSS Variables for light/dark */}
+      <style jsx global>{`
+        :root { --background: #f7f7f7; --foreground: #111111; }
+        .dark { --background: #0a0a0a; --foreground: #e5e5e5; }
+      `}</style>
 
-      {/* オーバーレイ */}
-      {menuOpen && (
-        <div
-          onClick={() => setMenuOpen(false)} // オーバーレイをクリックでメニューを閉じる
-          className="fixed inset-0 z-10 bg-black/50"
-        ></div>
-      )}
+      <div className="mx-auto max-w-4xl px-4 pb-24 pt-6 lg:px-6">
+        {/* Header */}
+        <header className="mb-4 flex items-center justify-between">
+          <h1 className="text-xl font-semibold">7日間クエストプランナー</h1>
+          <button
+            className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10"
+            aria-label="メニュー"
+            onClick={() => setTab((t) => (t === "設定" ? "ホーム" : "設定"))}
+          >
+            <span className="i">≡</span>
+          </button>
+        </header>
 
-      {/* メニュー */}
-      {menuOpen && (
-        <div className="fixed top-0 left-0 z-10 w-64 h-full bg-white shadow-lg">
-          <h2 className="text-lg font-semibold p-4 border-b">メニュー</h2>
-          <ul className="space-y-2 p-4">
-            {["ホーム", "クエスト", "チャット", "設定"].map((item) => (
-              <li key={item}>
-                <button
-                  onClick={() => {
-                    setTab(item as Tab);
-                    setMenuOpen(false); // メニューを閉じる
-                  }}
-                  className={`block w-full text-left px-4 py-2 rounded-lg ${
-                    tab === item ? "bg-rose-100 text-rose-600" : "hover:bg-neutral-100"
-                  }`}
-                >
-                  {item}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+        {tab === "ホーム" && (
+          <>
+            {/* Profile Card */}
+            <section className="mb-6 rounded-2xl border bg-white/80 p-4 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/5">
+              <div className="flex items-start gap-4">
+                {/* Avatar */}
+                <div className="grid h-12 w-12 place-items-center rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 text-lg font-bold text-blue-700 dark:from-sky-900/40 dark:to-indigo-900/40 dark:text-sky-200">
+                  🙂
+                </div>
 
-      {/* メインコンテンツ */}
-      <main className="mx-auto max-w-screen-sm p-4 text-black">
-        {tab === "ホーム" && state?.plans && (
-          <HomeView todayPlan={state.plans[todayIndex]} score={score} onRandom={() => setTab("クエスト")} />
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm text-neutral-500">{username}</p>
+                    <span className="rounded-full bg-neutral-900 px-2.5 py-0.5 text-xs text-white dark:bg-sky-600">
+                      {currentRank}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-3 text-sm">
+                    <span className="font-medium">★ {totalPoints.toLocaleString()} ポイント</span>
+                    <span className="text-neutral-500">次ランクまで {toNext.toLocaleString()} pt</span>
+                  </div>
+
+                  {/* Week progress bar */}
+                  <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-white/10">
+                    <div className="h-full rounded-full bg-neutral-900 transition-all dark:bg-sky-500" style={{ width: `${weekProgress}%` }} />
+                  </div>
+
+                  {/* Week days */}
+                  <div className="mt-3 flex items-center gap-3 overflow-x-auto">
+                    {["月", "火", "水", "木", "金", "土", "日"].map((d, i) => {
+                      const state = i < todayIndex ? "done" : i === todayIndex ? "active" : "future";
+                      return (
+                        <div key={d} className="flex items-center gap-2">
+                          <div
+                            className={[
+                              "grid h-7 w-7 place-items-center rounded-full text-xs",
+                              state === "done" && "bg-neutral-900 text-white dark:bg-sky-500",
+                              state === "active" && "border-2 border-neutral-900 text-neutral-900 dark:border-sky-400 dark:text-sky-200",
+                              state === "future" && "bg-neutral-100 text-neutral-400 dark:bg-white/10",
+                            ].filter(Boolean).join(" ")}
+                          >
+                            {i + 1}
+                          </div>
+                          <span className="text-xs text-neutral-500">{d}</span>
+                        </div>
+                      );
+                    })}
+                    <div className="grow" />
+                    <button
+                      className="ms-auto inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                      onClick={() => setTab("クエスト")}
+                    >
+                      + 追加
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Today's Quests */}
+            <section className="space-y-3">
+              <h2 className="sr-only">今日のクエスト</h2>
+              {todayEnabled.map((q) => (
+                <article key={q.id} className="rounded-2xl border bg-white/80 p-4 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/5">
+                  <div className="flex items-start gap-3">
+                    <label className="mt-0.5 inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900 dark:text-sky-500"
+                        checked={q.done}
+                        onChange={() => toggleDone(todayIndex, q.id)}
+                      />
+                    </label>
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="font-medium leading-tight">{q.title}</p>
+                          <p className="text-xs text-neutral-500">Day {todayIndex + 1}</p>
+                        </div>
+                        <div className="whitespace-nowrap text-xs">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-neutral-900 px-2 py-0.5 text-white dark:bg-sky-600">
+                            +{POINTS_PER_QUEST}ポイント
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-2 text-xs text-neutral-500">{q.done ? "完了済み" : "未開始"}</div>
+                    </div>
+                  </div>
+                </article>
+              ))}
+              {todayEnabled.length === 0 && (
+                <div className="rounded-2xl border bg-white/60 p-4 text-sm text-neutral-500">今日は有効なクエストがありません</div>
+              )}
+            </section>
+
+            {/* Today summary */}
+            <section className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border bg-white/80 p-4 text-center shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/5">
+                <div className="text-2xl font-semibold">{doneCount}/{totalCount}</div>
+                <div className="mt-1 text-xs text-neutral-500">完了クエスト</div>
+              </div>
+              <div className="rounded-2xl border bg-white/80 p-4 text-center shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/5">
+                <div className="text-2xl font-semibold">{todayEarned}</div>
+                <div className="mt-1 text-xs text-neutral-500">獲得ポイント</div>
+              </div>
+              <div className="rounded-2xl border bg-white/80 p-4 text-center shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/5">
+                <div className="text-2xl font-semibold">{achievementRate}%</div>
+                <div className="mt-1 text-xs text-neutral-500">達成率</div>
+              </div>
+            </section>
+          </>
         )}
 
         {tab === "クエスト" && state && (
@@ -349,65 +450,38 @@ export default function Page() {
             }}
           />
         )}
-      </main>
-    </div>
+      </div>
+
+      {/* Bottom Tab Bar */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/60 dark:border-white/10 dark:bg-zinc-900/70">
+        <ul className="mx-auto grid max-w-4xl grid-cols-4 px-4 py-2 text-xs">
+          {([
+            { label: "ホーム" },
+            { label: "クエスト" },
+            { label: "チャット" },
+            { label: "設定" },
+          ] as const).map((item) => (
+            <li key={item.label} className="flex items-center justify-center">
+              <button
+                className={[
+                  "flex min-w-[4.5rem] flex-col items-center rounded-xl px-3 py-1.5",
+                  tab === item.label ? "bg-neutral-900 text-white dark:bg-sky-600" : "text-neutral-600 hover:bg-black/5 dark:text-neutral-300 dark:hover:bg-white/10",
+                ].join(" ")}
+                onClick={() => setTab(item.label as Tab)}
+              >
+                <span className="text-[10px] leading-4">●</span>
+                <span>{item.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </main>
   );
 }
 
 /** -----------------------------
- *  ビュー：ホーム（既存）
- *  ----------------------------*/
-function HomeView({ todayPlan, score, onRandom }: { todayPlan: DayPlan; score: number; onRandom: () => void }) {
-  const enabled = todayPlan.quests.filter((q) => q.enabled);
-  const doneCount = enabled.filter((q) => q.done).length;
-
-  const randomQuest = useMemo(() => {
-    if (!enabled.length) return null;
-    return enabled[Math.floor(Math.random() * enabled.length)];
-  }, [todayPlan]);
-
-  return (
-  <section className="space-y-4">
-    <h1 className="text-xl font-semibold">ホーム（ダッシュボード）</h1>
-
-    {/* 現在のスコアとランク */}
-    <div className="rounded-2xl bg-white p-4 shadow-sm border">
-      <div className="text-sm text-neutral-500 mb-2">現在のスコア</div>
-      <div className="text-3xl font-bold">{score}</div>
-      <div className="text-sm text-neutral-500 mt-2">ランク: {calculateRank(score)}</div>
-    </div>
-
-    {/* 今日の目標達成度 */}
-    <div className="rounded-2xl bg-white p-4 shadow-sm border">
-      <div className="text-sm text-neutral-500 mb-2">今日の目標達成度</div>
-      <div className="text-3xl font-bold">
-        {doneCount} / {enabled.length}
-      </div>
-    </div>
-
-    {/* ランダムクエスト */}
-    <div className="rounded-2xl bg-white p-4 shadow-sm border">
-      <div className="text-sm text-neutral-500 mb-2">ランダムクエスト</div>
-      {randomQuest ? (
-        <div className="flex items-center justify-between">
-          <div className="font-medium">{randomQuest.title}</div>
-          <button
-            onClick={onRandom}
-            className="rounded-xl bg-rose-500 px-3 py-1.5 text-white"
-          >
-            やってみる
-          </button>
-        </div>
-      ) : (
-        <div className="text-neutral-500">有効なクエストがありません</div>
-      )}
-    </div>
-  </section>
-);
-}
-
-/** -----------------------------
- *  ビュー：クエスト（既存）
+ *  既存ビュー：クエスト
  *  ----------------------------*/
 function QuestView({
   plans,
@@ -423,48 +497,153 @@ function QuestView({
   return (
     <section className="space-y-4">
       <h1 className="text-xl font-semibold">クエスト</h1>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {plans.map((p, idx) => (
-          <div
-            key={p.day}
-            className={`rounded-2xl border bg-white p-4 shadow-sm ${idx === todayIndex ? "border-rose-400" : "border-neutral-200"}`}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="font-semibold">Day {p.day}</div>
-              {idx === todayIndex && <span className="text-xs text-rose-600">今日</span>}
+
+      <div className="space-y-4">
+        {plans.map((p, idx) => {
+          const isToday = idx === todayIndex;
+          const dayEnabled = p.quests.some((q) => q.enabled);
+
+          const toggleDay = (checked: boolean) => {
+            // Day単位でON/OFF（全クエストの enabled を切り替え）
+            p.quests.forEach((q) => {
+              q.enabled = checked;
+              if (!checked) q.done = false;
+            });
+          };
+
+          return (
+            <div
+              key={p.day}
+              className={[
+                "rounded-2xl border bg-white p-4 shadow-sm",
+                isToday ? "border-rose-300 ring-2 ring-rose-100" : "border-neutral-200",
+              ].join(" ")}
+            >
+              {/* Header */}
+              <div className="mb-3 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-7 w-7 place-items-center rounded-full bg-neutral-100 text-sm font-medium text-neutral-700">{p.day}</span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-semibold">Day {p.day}</div>
+                      {isToday && (
+                        <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-semibold text-white">TODAY</span>
+                      )}
+                    </div>
+                    {/* サブタイトルがあればここに表示（例：実践練習・今日） */}
+                    {isToday && (
+                      <div className="text-xs text-rose-500">実践練習・今日</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Dayスイッチ */}
+                <label className="inline-flex cursor-pointer items-center gap-2 select-none">
+                  <span className="text-xs text-neutral-500 hidden sm:inline">有効</span>
+                  <input
+                    type="checkbox"
+                    defaultChecked={dayEnabled}
+                    onChange={(e) => toggleDay(e.target.checked)}
+                    className="peer sr-only"
+                  />
+                  <span className="relative h-6 w-11 rounded-full bg-neutral-200 transition peer-checked:bg-emerald-500">
+                    <span className="absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition peer-checked:translate-x-5" />
+                  </span>
+                </label>
+              </div>
+
+              {/* Quests list */}
+              <ul className="space-y-3">
+                {p.quests.map((q) => (
+                  <li key={q.id} className="rounded-xl border border-neutral-100 bg-white/80 p-3 shadow-sm">
+                    <div className="flex items-start gap-3">
+                      {/* checkbox */}
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-5 w-5 rounded border-neutral-300 text-violet-600 focus:ring-violet-600 disabled:opacity-40"
+                        checked={q.done}
+                        disabled={!q.enabled || q.locked}
+                        onChange={() => onToggleDone(idx, q.id)}
+                      />
+
+                      <div className="flex-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className={["font-medium", q.done ? "line-through text-neutral-400" : ""].filter(Boolean).join(" ")}>{q.title}</p>
+                            {/* サブ情報 */}
+                            {(q.category || q.note) && (
+                              <p className="text-xs text-neutral-500">{q.category}{q.note ? ` ・ ${q.note}` : ""}</p>
+                            )}
+                          </div>
+
+                          {/* ポイントバッジ */}
+                          <span className="whitespace-nowrap rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">
+                            +{(q.points ?? POINTS_PER_QUEST)}pt
+                          </span>
+                        </div>
+
+                        {/* 進捗バー or ステータス */}
+                        {typeof q.progress === "number" && !q.done && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-100">
+                              <div className="h-full rounded-full bg-orange-400 transition-all" style={{ width: `${q.progress}%` }} />
+                            </div>
+                            <span className="text-xs text-neutral-500">{q.progress}%</span>
+                          </div>
+                        )}
+
+                        <div className="mt-2 flex items-center gap-3 text-xs">
+                          {q.done && (
+                            <span className="inline-flex items-center gap-1 text-emerald-600">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                              完了済み
+                            </span>
+                          )}
+                          {!q.enabled && (
+                            <span className="inline-flex items-center gap-1 text-neutral-400">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 17a2 2 0 0 0 2-2V7a2 2 0 0 0-4 0v8a2 2 0 0 0 2 2z"/><path d="M5 11h14v10H5z"/></svg>
+                              ロック中
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 個別ON/OFF */}
+                      <button
+                        onClick={() => onToggleEnabled(idx, q.id)}
+                        className={["rounded-full border px-2 py-1 text-xs",
+                          q.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-neutral-200 bg-neutral-100 text-neutral-500"
+                        ].join(" ")}
+                        title="ON/OFF"
+                      >
+                        {q.enabled ? "ON" : "OFF"}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+
+              {/* Bonus banner（今日のみ）*/}
+              {isToday && (
+                <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+                  <div className="flex items-center gap-2 font-medium">
+                    <span>🔥 今日のボーナス</span>
+                    <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs text-rose-600">+50pt</span>
+                  </div>
+                  <p className="mt-1 text-rose-600/90">すべてのクエストを完了すると追加ポイントを獲得！</p>
+                </div>
+              )}
             </div>
-            <ul className="space-y-2">
-              {p.quests.map((q) => (
-                <li key={q.id} className="flex items-center justify-between gap-3">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={q.done}
-                      disabled={!q.enabled}
-                      onChange={() => onToggleDone(idx, q.id)}
-                      className="h-4 w-4"
-                    />
-                    <span className={q.enabled ? "" : "line-through text-neutral-400"}>{q.title}</span>
-                  </label>
-                  <button
-                    onClick={() => onToggleEnabled(idx, q.id)}
-                    className={`rounded-lg px-2 py-1 text-xs border ${q.enabled ? "bg-emerald-50 border-emerald-200" : "bg-neutral-100 border-neutral-200"}`}
-                    title="ON/OFF"
-                  >
-                    {q.enabled ? "ON" : "OFF"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
 }
 
+
 /** -----------------------------
- *  NEW: ビュー：チャット（模擬ChatGPT）
+ *  NEW: チャット（模擬）
  *  ----------------------------*/
 function ChatView() {
   const [messages, setMessages] = useState<ChatMsg[]>([
@@ -472,21 +651,16 @@ function ChatView() {
   ]);
   const [isTyping, setIsTyping] = useState(false);
 
-  // 既存のChatBarを使うため、表示用に string[] に変換
-  const displayLines = messages.map((m) => (m.role === "user" ? `あなた: ${m.content}` : `アシスタント: ${m.content}`));
-
   const handleSubmit = (text: string) => {
     const userMsg: ChatMsg = { role: "user", content: text };
     setMessages((prev) => [...prev, userMsg]);
     setIsTyping(true);
 
-    // 簡易モック応答
     const reply = mockAssistant(text, messages);
-    // タイピング演出
     setTimeout(() => {
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
       setIsTyping(false);
-    }, Math.min(1200, Math.max(300, reply.length * 30))); // 長さに応じて待機
+    }, Math.min(1200, Math.max(300, reply.length * 30)));
   };
 
   const resetChat = () => {
@@ -496,8 +670,6 @@ function ChatView() {
   return (
     <section className="space-y-4 my-2">
       <h1 className="text-xl font-semibold">チャット</h1>
-
-      {/* バブルUI（直近10件） */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm h-80 overflow-y-auto space-y-3">
         {messages.slice(-10).map((m, i) => (
           <div key={i} className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm shadow ${m.role === "user" ? "ml-auto bg-rose-500 text-white" : "mr-auto bg-neutral-100"}`}>
@@ -511,7 +683,6 @@ function ChatView() {
         )}
       </div>
 
-      {/* 既存のチャットバー（ログ全体のテキスト表示にも活用可能） */}
       <MessageInput onSubmit={handleSubmit} />
 
       <div className="flex justify-end">
@@ -521,70 +692,28 @@ function ChatView() {
   );
 }
 
-/** シンプルなモック応答ロジック */
 function mockAssistant(input: string, history: ChatMsg[]): string {
   const text = input.trim();
   const lower = text.toLowerCase();
-
-  // 1) ルールベースの簡易応答
-  if (/^help|^ヘルプ|困った|どう使/.test(text)) {
-    return "使い方: 目標や悩みを書いて。小さく分解したタスク案を返すよ。例: ‘英単語を覚えたい’";
-  }
-  if (/こんにちは|初めまして|こんちは/.test(text)) {
-    return "こんにちは。今日は何を進める？7分で出来る小タスクからいこう";
-  }
-  if (/天気|weather/.test(lower)) {
-    return "天気はこのモックでは見られないけど、代わりに ‘屋内で出来ること’ を3つ提案: 1) ストレッチ7分 2) 読書10分 3) 机の片付け5分";
-  }
-
-  // 2) 目標→タスク分解（簡易）
-  if (/英単語|単語|英語/.test(text)) {
-    return "提案: 1) 1分で復習テーマ決め 2) 7分で10語暗記 3) 2分で自己テスト → 合計10分";
-  }
-  if (/運動|筋トレ|ストレッチ|走/.test(text)) {
-    return "提案: 1) 1分準備 2) 7分サーキット(腕立て/スクワット/プランク) 3) 2分整理";
-  }
-
-  // 3) 質問らしい文には相槌＋要約
+  if (/^help|^ヘルプ|困った|どう使/.test(text)) return "使い方: 目標や悩みを書いて。小さく分解したタスク案を返すよ。例: ‘英単語を覚えたい’";
+  if (/こんにちは|初めまして|こんちは/.test(text)) return "こんにちは。今日は何を進める？7分で出来る小タスクからいこう";
+  if (/天気|weather/.test(lower)) return "天気はこのモックでは見られないけど、代わりに ‘屋内で出来ること’ を3つ提案: 1) ストレッチ7分 2) 読書10分 3) 机の片付け5分";
+  if (/英単語|単語|英語/.test(text)) return "提案: 1) 1分で復習テーマ決め 2) 7分で10語暗記 3) 2分で自己テスト → 合計10分";
+  if (/運動|筋トレ|ストレッチ|走/.test(text)) return "提案: 1) 1分準備 2) 7分サーキット(腕立て/スクワット/プランク) 3) 2分整理";
   if (/[?？]$/.test(text)) {
     const lastUser = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
     return `要するに『${lastUser.slice(0, 40)}』ってことかな。まずは小さく試すと良いよ`;
   }
-
-  // 4) デフォルト応答（共感＋次アクション）
-  const len = text.length;
-  const n = Math.max(3, Math.min(5, Math.floor(len / 12)));
-  const tips = [
-    "タイマーを10分セット",
-    "やることを3つに絞る",
-    "終わったら一言日記",
-    "水を一杯飲む",
-    "机の上を15秒だけ整える",
-  ];
-  const pick = shuffle(tips).slice(0, n).join(" / ");
+  const tips = ["タイマーを10分セット", "やることを3つに絞る", "終わったら一言日記", "水を一杯飲む", "机の上を15秒だけ整える"];
+  const n = Math.max(3, Math.min(5, Math.floor(text.length / 12)));
+  const pick = [...tips].sort(() => Math.random() - 0.5).slice(0, n).join(" / ");
   return `なるほど。いまから出来る小さな一歩: ${pick}`;
 }
 
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
 /** -----------------------------
- *  既存：設定ビュー & フッター & ChatBar コンポーネント
- *  （あなたの元ファイルから流用可能。ここでは省略せず同梱）
+ *  補助 UI
  *  ----------------------------*/
 function SettingsView({ onReset, theme, onThemeChange }: { onReset: () => void; theme: Theme; onThemeChange: (theme: Theme) => void }) {
-  const handleBackgroundColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onThemeChange({ ...theme, backgroundColor: e.target.value });
-  };
-  const handleTextColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onThemeChange({ ...theme, textColor: e.target.value });
-  };
   return (
     <section className="space-y-4">
       <h1 className="text-xl font-semibold">設定</h1>
@@ -593,30 +722,6 @@ function SettingsView({ onReset, theme, onThemeChange }: { onReset: () => void; 
         <button onClick={onReset} className="rounded-xl bg-neutral-900 px-4 py-2 text-white">冒険をリセット</button>
       </div>
     </section>
-  );
-}
-
-function FooterNav({ current, onChange, disabled = false }: { current: Tab; onChange: (t: Tab) => void; disabled?: boolean }) {
-  const items: Tab[] = ["ホーム", "クエスト", "チャット", "設定"];
-  return (
-    <nav className="fixed inset-x-0 bottom-0 z-10 mx-auto max-w-screen-sm border-t bg-white/95 backdrop-blur">
-      <ul className="flex items-stretch justify-around">
-        {items.map((t) => {
-          const active = current === t;
-          return (
-            <li key={t} className="flex-1">
-              <button
-                disabled={disabled}
-                onClick={() => onChange(t)}
-                className={`w-full py-3 text-sm transition ${active ? "text-rose-600 font-medium" : "text-neutral-600"} ${disabled ? "opacity-50" : ""}`}
-              >
-                {t}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
   );
 }
 
@@ -635,51 +740,10 @@ function MessageInput({ onSubmit }: { onSubmit: (message: string) => void }) {
         onChange={(e) => setInput(e.target.value)}
         placeholder="メッセージを入力..."
         className="flex-1 rounded-lg border px-3 py-2 text-sm"
-        onKeyDown={(e) => {
-          if (e.key === "Enter") handleSend();
-        }}
+        onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
       />
-      <button onClick={handleSend} className="rounded-lg bg-rose-500 px-4 py-2 text-white">
-        送信
-      </button>
+      <button onClick={handleSend} className="rounded-lg bg-rose-500 px-4 py-2 text-white">送信</button>
     </div>
   );
 }
 
-function ChatBar({ messages, onSubmit }: { messages: string[]; onSubmit: (message: string) => void }) {
-  const [input, setInput] = useState("");
-  const handleSend = () => {
-    if (!input.trim()) return;
-    onSubmit(input);
-    setInput("");
-  };
-  return (
-    <section className="space-y-4 my-4">
-      <h2 className="text-lg font-semibold">チャット</h2>
-      <div className="rounded-2xl border bg-white p-4 shadow-sm space-y-2 h-48 overflow-y-auto">
-        {messages.length > 0 ? (
-          messages.map((msg, idx) => (
-            <div key={idx} className="text-sm">{msg}</div>
-          ))
-        ) : (
-          <div className="text-sm text-neutral-500">メッセージはありません。</div>
-        )}
-      </div>
-      <div className="flex items-center space-x-2">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="メッセージを入力..."
-          className="flex-1 rounded-lg border px-3 py-2 text-sm"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleSend();
-          }}
-        />
-        <button onClick={handleSend} className="rounded-lg bg-rose-500 px-4 py-2 text-white">
-          送信
-        </button>
-      </div>
-    </section>
-  );
-}
