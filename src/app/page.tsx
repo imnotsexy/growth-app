@@ -306,7 +306,7 @@ export default function Page() {
       <div className="mx-auto max-w-4xl px-4 pb-24 pt-6 lg:px-6">
         {/* Header */}
         <header className="mb-4 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">7日間クエストプランナー</h1>
+          <h1 className="text-xl font-semibold">River Agent</h1>
           <button
             className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10"
             aria-label="メニュー"
