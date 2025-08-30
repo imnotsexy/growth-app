@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Home, ClipboardList, MessageCircle, Settings, type LucideIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Home, ClipboardList, MessageCircle, Settings, type LucideIcon, Bot,
+  Circle,
+  Ellipsis,
+  Plus,
+  Smile,
+  Send,
+  Mic,
+  Camera,
+  Paperclip, } from "lucide-react";
 
 
 /** -----------------------------
@@ -49,7 +57,7 @@ type AppState = {
 };
 
 type ChatRole = "user" | "assistant";
- type ChatMsg = { role: ChatRole; content: string };
+type ChatMsg = { role: "assistant" | "user"; content: string };
 
 /** -----------------------------
  *  ランク判定
@@ -130,7 +138,6 @@ function buildWeekPlan(selected: CategoryKey[]): DayPlan[] {
     days.push({ day: i, quests: trimmed });
   }
 return days;
-  return days;
 }
 
 function loadState(): AppState | null {
@@ -314,8 +321,9 @@ export default function Page() {
             aria-label="メニュー"
             onClick={() => setTab((t) => (t === "設定" ? "ホーム" : "設定"))}
           >
-            <span className="i">≡</span>
+            <span className="i">≡</span> 
           </button>
+          {/*右上ボタン */}
         </header>
 
         {tab === "ホーム" && (
@@ -648,71 +656,212 @@ function QuestView({
 
 
 /** -----------------------------
- *  NEW: チャット（模擬）
+ *  NEW: チャット（模擬）<-バックエンド連携
  *  ----------------------------*/
+/* ---------- NEW ChatView (replace here) ---------- */
 function ChatView() {
   const [messages, setMessages] = useState<ChatMsg[]>([
-    { role: "assistant", content: "River Agentです。何から始める？" },
+    { role: "assistant", content: "River Agentです！ 何でもお聞きください 🤖" },
+    { role: "assistant", content: "こんにちは！今日はどのようなことでお手伝いできますか？" },
   ]);
   const [isTyping, setIsTyping] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const handleSubmit = (text: string) => {
-    const userMsg: ChatMsg = { role: "user", content: text };
+    const t = text.trim();
+    if (!t) return;
+    const userMsg: ChatMsg = { role: "user", content: t };
     setMessages((prev) => [...prev, userMsg]);
     setIsTyping(true);
 
-    const reply = mockAssistant(text, messages);
+    const reply = mockAssistant(t, messages);
     setTimeout(() => {
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
       setIsTyping(false);
-    }, Math.min(1200, Math.max(300, reply.length * 30)));
+    }, Math.min(1200, Math.max(300, reply.length * 25)));
   };
 
   const resetChat = () => {
     setMessages([{ role: "assistant", content: "新しいチャットを始めよう。目標は？" }]);
   };
 
+  // 送受信のたびに最下部へ
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isTyping]);
+
   return (
-    <section className="space-y-4 my-2">
-      <h1 className="text-xl font-semibold">チャット</h1>
-      <div className="rounded-2xl border bg-white p-4 shadow-sm h-80 overflow-y-auto space-y-3">
-        {messages.slice(-10).map((m, i) => (
-          <div key={i} className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm shadow ${m.role === "user" ? "ml-auto bg-rose-500 text-white" : "mr-auto bg-neutral-100"}`}>
-            {m.content}
+    <section className="my-2 space-y-3">
+      {/* Header */}
+      <div className="rounded-2xl border bg-white px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-600 text-white">
+              <Bot className="h-5 w-5" />
+            </div>
+            <span className="absolute -right-0.5 -bottom-0.5 flex h-3 w-3 items-center justify-center rounded-full bg-white">
+              <Circle className="h-2.5 w-2.5 fill-green-500 stroke-green-500" />
+            </span>
           </div>
-        ))}
+          <div className="flex-1">
+            <div className="text-base font-semibold leading-5">River Agent</div>
+            <div className="text-xs text-neutral-500">オンライン</div>
+          </div>
+          <button className="rounded-full p-2 text-neutral-500 hover:bg-neutral-100" aria-label="メニュー">
+            <Ellipsis className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Timeline */}
+      <div className="h-80 space-y-3 overflow-y-auto rounded-2xl border bg-white p-4 shadow-sm">
+        {messages.map((m, i) =>
+          m.role === "assistant" ? (
+            <BotBubble key={i}>{m.content}</BotBubble>
+          ) : (
+            <UserBubble key={i}>{m.content}</UserBubble>
+          )
+        )}
+
         {isTyping && (
-          <div className="mr-auto max-w-[85%] rounded-2xl px-3 py-2 text-sm bg-neutral-100 shadow">
-            <span className="inline-block animate-pulse">…考え中</span>
+          <div className="flex items-end gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-white">
+              <Bot className="h-4 w-4" />
+            </div>
+            <div className="rounded-2xl bg-neutral-100 px-3 py-2 text-sm shadow">
+              <span className="inline-flex gap-1">
+                <span className="animate-bounce">•</span>
+                <span className="animate-bounce [animation-delay:150ms]">•</span>
+                <span className="animate-bounce [animation-delay:300ms]">•</span>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* アンカー */}
+        <div ref={scrollRef} />
+
+        {/* サジェスト（タイピング時は非表示） */}
+        {!isTyping && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <SuggestChip onClick={() => handleSubmit("アイデア提案が欲しい")}>アイデア提案</SuggestChip>
+            <SuggestChip onClick={() => handleSubmit("データ分析をお願い")}>データ分析</SuggestChip>
           </div>
         )}
       </div>
 
-      <MessageInput onSubmit={handleSubmit} />
+      {/* Input */}
+      <ChatInput onSubmit={handleSubmit} />
 
       <div className="flex justify-end">
-        <button onClick={resetChat} className="text-xs underline text-neutral-600 underline-offset-4">チャットをリセット</button>
+        <button onClick={resetChat} className="text-xs text-neutral-600 underline underline-offset-4">
+          チャットをリセット
+        </button>
       </div>
     </section>
   );
 }
 
-function mockAssistant(input: string, history: ChatMsg[]): string {
-  const text = input.trim();
-  const lower = text.toLowerCase();
-  if (/^help|^ヘルプ|困った|どう使/.test(text)) return "使い方: 目標や悩みを書いて。小さく分解したタスク案を返すよ。例: ‘英単語を覚えたい’";
-  if (/こんにちは|初めまして|こんちは/.test(text)) return "こんにちは。今日は何を進める？7分で出来る小タスクからいこう";
-  if (/天気|weather/.test(lower)) return "天気はこのモックでは見られないけど、代わりに ‘屋内で出来ること’ を3つ提案: 1) ストレッチ7分 2) 読書10分 3) 机の片付け5分";
-  if (/英単語|単語|英語/.test(text)) return "提案: 1) 1分で復習テーマ決め 2) 7分で10語暗記 3) 2分で自己テスト → 合計10分";
-  if (/運動|筋トレ|ストレッチ|走/.test(text)) return "提案: 1) 1分準備 2) 7分サーキット(腕立て/スクワット/プランク) 3) 2分整理";
-  if (/[?？]$/.test(text)) {
-    const lastUser = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
-    return `要するに『${lastUser.slice(0, 40)}』ってことかな。まずは小さく試すと良いよ`;
-  }
-  const tips = ["タイマーを10分セット", "やることを3つに絞る", "終わったら一言日記", "水を一杯飲む", "机の上を15秒だけ整える"];
-  const n = Math.max(3, Math.min(5, Math.floor(text.length / 12)));
-  const pick = [...tips].sort(() => Math.random() - 0.5).slice(0, n).join(" / ");
-  return `なるほど。いまから出来る小さな一歩: ${pick}`;
+/* ---------- Sub Components ---------- */
+function BotBubble({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-white">
+        <Bot className="h-4 w-4" />
+      </div>
+      <div className="max-w-[85%] rounded-2xl bg-white px-3 py-2 text-sm shadow ring-1 ring-black/5">
+        {children}
+        <div className="mt-1 text-[10px] text-neutral-400">14:23</div>
+      </div>
+    </div>
+  );
+}
+
+function UserBubble({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-end gap-2">
+      <div className="max-w-[85%] rounded-2xl bg-blue-600 px-3 py-2 text-sm text-white shadow">
+        {children}
+        <div className="mt-1 text-right text-[10px] text-blue-100/90">14:24</div>
+      </div>
+      <div className="mt-0.5 h-8 w-8 rounded-full bg-neutral-300" />
+    </div>
+  );
+}
+
+function SuggestChip({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="rounded-full border px-3 py-1 text-sm shadow-sm transition hover:bg-neutral-50">
+      {children}
+    </button>
+  );
+}
+
+function ChatInput({ onSubmit }: { onSubmit: (text: string) => void }) {
+  const [text, setText] = useState("");
+
+  const send = () => {
+    const t = text.trim();
+    if (!t) return;
+    onSubmit(t);
+    setText("");
+  };
+
+  return (
+    <div className="rounded-2xl border bg-white p-3 shadow-sm">
+      <div className="flex items-center gap-2">
+        <button className="rounded-full p-2 text-neutral-600 hover:bg-neutral-100" aria-label="追加">
+          <Plus className="h-5 w-5" />
+        </button>
+
+        <input
+          className="flex-1 rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400/40"
+          placeholder="メッセージを入力…"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
+        />
+
+        <button className="rounded-full p-2 text-neutral-600 hover:bg-neutral-100" aria-label="絵文字">
+          <Smile className="h-5 w-5" />
+        </button>
+
+        <button onClick={send} className="rounded-full bg-blue-600 p-2 text-white shadow hover:bg-blue-600/90" aria-label="送信">
+          <Send className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-2 text-sm">
+        <AttachmentChip icon={<Mic className="h-4 w-4" />}>音声入力</AttachmentChip>
+        <AttachmentChip icon={<Camera className="h-4 w-4" />}>写真</AttachmentChip>
+        <AttachmentChip icon={<Paperclip className="h-4 w-4" />}>ファイル</AttachmentChip>
+      </div>
+    </div>
+  );
+}
+
+function AttachmentChip({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <button className="inline-flex items-center gap-1 rounded-full bg-neutral-50 px-3 py-1 ring-1 ring-neutral-200 hover:bg-neutral-100">
+      {icon}
+      <span>{children}</span>
+    </button>
+  );
+}
+
+
+
+//言葉を適当に返すだけの簡易版 //バックエンド
+// ダミー応答（既存のmockAssistantがあれば差し替え）
+function mockAssistant(input: string, _messages: ChatMsg[]): string {
+  if (/進捗|status|ステータス/.test(input)) return "現在の進捗を要約します。まずはタスク一覧を共有してください。";
+  if (/データ|分析/.test(input)) return "CSVかスプレッドシートをアップロードいただければ、概要統計→可視化→所見まで出します。";
+  return "承知しました。もう少し具体的に状況を教えてください。";
 }
 
 /** -----------------------------
@@ -723,8 +872,8 @@ function SettingsView({ onReset, theme, onThemeChange }: { onReset: () => void; 
     <section className="space-y-4">
       <h1 className="text-xl font-semibold">設定</h1>
       <div className="rounded-2xl border bg-white p-4 shadow-sm space-y-3">
-        <div className="text-sm text-neutral-600">進行中のクエストをリセットして最初から始めます。ランクは失われません。</div>
-        <button onClick={onReset} className="rounded-xl bg-neutral-900 px-4 py-2 text-white">冒険をリセット</button>
+        <div className="text-sm text-neutral-600">進行中のクエストをリセットして最初から始めます。</div>
+        <button onClick={onReset} className="rounded-xl bg-neutral-900 px-4 py-2 text-white">すべてをリセット</button>
       </div>
     </section>
   );
